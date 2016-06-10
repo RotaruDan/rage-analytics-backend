@@ -347,7 +347,7 @@ describe('Traces converter tests', function () {
         var resultTrace = {
             versionId: definitionObj.extensions.versionId,
             gameplayId: definitionObj.extensions.gameplayId,
-            event:  event,
+            event: event,
             target: target,
             value: value,
             timestamp: timestamp

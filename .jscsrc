@@ -17,6 +17,7 @@
     "disallowImplicitTypeConversion": ["string"],
     "disallowSpacesInFunction": null,
     "excludeFiles": [
-        "public/apidoc/**"
+        "public/apidoc/**",
+        "correctStatements.js"
     ]
 }

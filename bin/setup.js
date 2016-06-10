@@ -65,6 +65,9 @@ if (process.env.NODE_ENV === 'test') {
     process.exit(0);
 
 } else {
+    var statements = require('../correctStatements.js');
+    console.log(statements.length);
+    Fs.writeFileSync('correctStatements.json', JSON.stringify(statements, null, '    '));
     Async.auto({
 
         projectName: function (done) {
