@@ -103,6 +103,7 @@ exports.defaultValues = {
     mongoHost: 'localhost',
     mongoPort: '27017',
     mongodbUrl: 'mongodb://localhost:27017/analytics-backend',
+    mongodbUrlA2: 'mongodb://localhost:27017/' + (process.env.A2_MONGO_NAME || 'a2'),
     mongoModelVersion: '3', // Integer increment per version change
     elasticsearchURL: 'http://localhost:9200',
     apiPath: '/api',
@@ -144,6 +145,7 @@ exports.testValues = {
     mongoHost: 'localhost',
     mongoPort: '27017',
     mongodbUrl: 'mongodb://localhost:27017/analytics-backend-test', // This must be different than 'exports.defaultValues.mongodbUrl'
+    mongodbUrlA2: 'mongodb://localhost:27017/' + (process.env.A2_MONGO_NAME || 'a2') + '-test',
     mongoModelVersion: '3', // Integer increment per version change
     elasticsearchURL: 'http://localhost:9200',
     apiPath: '/api',
