@@ -190,7 +190,7 @@ initFromEnv(exports.testValues, prefix, links);
 exports.defaultValues.mongodbUrl = 'mongodb://' + exports.defaultValues.mongoHost + ':' + exports.defaultValues.mongoPort + '/analytics-backend';
 exports.testValues.mongodbUrl = exports.defaultValues.mongodbUrl + '-test';
 
-exports.defaultValues.mongodbUrlA2 = 'mongodb://' + exports.defaultValues.mongoHost + ':' + exports.defaultValues.mongoPort + (process.env.A2_MONGO_NAME || 'a2');
+exports.defaultValues.mongodbUrlA2 = 'mongodb://' + exports.defaultValues.mongoHost + ':' + exports.defaultValues.mongoPort + '/' + (process.env.A2_MONGO_NAME || 'a2');
 exports.testValues.mongodbUrlA2 = exports.defaultValues.mongodbUrlA2 + '-test';
 
 exports.defaultValues.elasticsearchURL = 'http://' + exports.defaultValues.elasticsearchHost + ':' + exports.defaultValues.elasticsearchPort;
