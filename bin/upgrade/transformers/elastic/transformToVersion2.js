@@ -165,6 +165,7 @@ var indices = {
     deleted: {}
 };
 
+var originalIndices = [];
 function checkIsVersionsIndex(index, config, callback) {
     var objectIdIndex;
     try {
@@ -183,6 +184,8 @@ function checkIsVersionsIndex(index, config, callback) {
             if (err) {
                 indices.others.push(index);
             } else if (res) {
+                indices.versions.push(index);
+            } else {
                 indices.versions.push(index);
             }
             if (callback) {
@@ -254,11 +257,7 @@ function backup(config, callback) {
             callback(null, config);
         });
 
-        var backedUpCallback = function (err, index, response) {
-            if (err) {
-                console.error('Backup error ' + err);
-                return callback(err);
-            }
+        var backedUpCallback = function (index) {
 
             var indexName = index.index;
             if (indexName === '.kibana') {
@@ -283,6 +282,7 @@ function backup(config, callback) {
                 checkIsTracesIndex(index, config, finishedCount);
             }
         };
+        originalIndices = response;
         for (var i = 0; i < response.length; i++) {
             var index = response[i];
             if (index.index) {
@@ -297,7 +297,7 @@ function backup(config, callback) {
                     continue;
                 }
             }
-            backUpIndex(esClient, index, backedUpCallback);
+            backedUpCallback(index);
         }
     });
 }
@@ -339,98 +339,6 @@ function attemptIndexErrors(esClient, options, callback) {
     });
 }
 
-function upgradeGameIndex(esClient, gameIndex, callback) {
-    attemptGetIndexErrors(esClient, {
-        index: gameIndex.index,
-        type: 'visualization',
-        id: 'TotalSessionPlayers-Cmn'
-    }, function (error, response) {
-        if (error) {
-            return callback(error);
-        }
-
-        if (!response || !response._source) {
-            return callback();
-        }
-
-        attemptIndexErrors(esClient, {
-            index: gameIndex.index,
-            type: 'visualization',
-            id: 'TotalSessionPlayers-Cmn',
-            body: {
-                title: 'TotalSessionPlayers-Cmn',
-                visState: '{"title":"Total Session Players",' +
-                '"type":"metric","params":{"handleNoResults":true,' +
-                '"fontSize":60},"aggs":[{"id":"1","type":"cardinality",' +
-                '"schema":"metric","params":{"field":"name.keyword",' +
-                '"customLabel":"SessionPlayers"}}],"listeners":{}}',
-                uiStateJSON: '{}',
-                description: '',
-                version: 1,
-                kibanaSavedObjectMeta: {
-                    searchSourceJSON: '{"index":"57604f53f552624300d9caa6",' +
-                    '"query":{"query_string":{"query":"*","analyze_wildcard":true}},' +
-                    '"filter":[]}'
-                },
-                author: '_default_',
-                isTeacher: true,
-                isDeveloper: true
-            }
-        }, function (error, response) {
-            if (error) {
-                return callback(error);
-            }
-            attemptGetIndexErrors(esClient, {
-                index: gameIndex.index,
-                type: 'visualization',
-                id: 'xAPIVerbsActivity'
-            }, function (errr, res) {
-                if (errr) {
-                    return callback(errr);
-                }
-
-                if (!res || !res._source) {
-                    return callback();
-                }
-
-                attemptIndexErrors(esClient, {
-                    index: gameIndex.index,
-                    type: 'visualization',
-                    id: 'xAPIVerbsActivity',
-                    body: {
-                        title: 'xAPIVerbsActivity',
-                        visState: '{"title":"xAPI Verbs Activity",' +
-                        '"type":"histogram","params":{"shareYAxis":true,' +
-                        '"addTooltip":true,"addLegend":true,"scale":"linear",' +
-                        '"mode":"stacked","times":[],"addTimeMarker":false,' +
-                        '"defaultYExtents":false,"setYExtents":false,"yAxis":{}},' +
-                        '"aggs":[{"id":"1","type":"count","schema":"metric",' +
-                        '"params":{"customLabel":"Activity Count"}},{"id":"2",' +
-                        '"type":"terms","schema":"segment","params":{' +
-                        '"field":"event.keyword","size":15,"order":"desc",' +
-                        '"orderBy":"1","customLabel":"xAPI Verb"}}],"listeners":{}}',
-                        uiStateJSON: '{}',
-                        description: '',
-                        version: 1,
-                        kibanaSavedObjectMeta: {
-                            searchSourceJSON: '{"index":"57604f53f552624300d9caa6",' +
-                            '"query":{"query_string":{"query":"*","analyze_wildcard":true}},' +
-                            '"filter":[]}'
-                        },
-                        author: '_default_',
-                        isTeacher: false,
-                        isDeveloper: true
-                    }
-                }, function (error, response) {
-                    if (callback) {
-                        callback(error);
-                    }
-                });
-            });
-        });
-    });
-}
-
 function finishedCountCallback(length, callback) {
     var finished = 0;
     return function () {
@@ -439,17 +347,6 @@ function finishedCountCallback(length, callback) {
             callback();
         }
     };
-}
-
-function upgradeGamesIndices(esClient, callback) {
-    if (indices.games.length === 0) {
-        return callback();
-    }
-    var i;
-    for (i = 0; i < indices.games.length; i++) {
-        var gameIndex = indices.games[i];
-        upgradeGameIndex(esClient, gameIndex, callback);
-    }
 }
 
 function checkTraceExtensions(trace) {
@@ -472,8 +369,79 @@ function checkTraceExtensions(trace) {
     return newTrace;
 }
 
+var dupIndices = {};
+
+var toDelete = [];
+
+var compareHits = function (esClient, hitsArray, equals, finishedCallback) {
+    if (hitsArray.length === 0) {
+        return finishedCallback(equals);
+    }
+
+    var currentHit = hitsArray[0];
+    if (hitsArray.length === 1) {
+        hitsArray = [];
+    } else {
+        hitsArray.shift();
+        if (!hitsArray) {
+            hitsArray = [];
+        }
+    }
+    if (!currentHit || !currentHit._source.timestamp) {
+        return compareHits(esClient, hitsArray, equals, finishedCallback);
+    }
+
+    esClient.search({
+        index: currentHit._index,
+        type: currentHit._type,
+        body: {
+            query: {
+                match: {
+                    timestamp: currentHit._source.timestamp
+                }
+            }
+        }
+    }, function (error, response) {
+        if (error) {
+            console.error('Error fetching hit! ' + currentHit);
+            console.error(error);
+            return compareHits(esClient, hitsArray, equals, finishedCallback);
+        }
+
+        response.hits.hits.forEach(function (foundHit) {
+            if (!foundHit) {
+                return;
+            }
+
+            if (foundHit._id === currentHit._id) {
+                return;
+            }
+            var p = Object.keys(currentHit._source);
+            var euq = true;
+            Object.keys(foundHit._source).forEach(function (i) {
+                if (p.indexOf(i) === -1) {
+                    euq = false;
+                }
+                if (currentHit._source[i] !== foundHit._source[i]) {
+                    euq = false;
+                }
+            });
+
+            if (euq) {
+                toDelete.push({delete: {_index: foundHit._index, _type: foundHit._type, _id: foundHit._id}});
+                equals.push({
+                    original: currentHit,
+                    duplicate: foundHit
+                });
+            }
+        });
+        compareHits(esClient, hitsArray, equals, finishedCallback);
+    });
+};
+
 function identifyExtensionsFromIndex(esClient, traceIndex, callback) {
     // First we do a search, and specify a scroll timeout
+    dupIndices[traceIndex.index] = [];
     var total = 0;
     esClient.search({
         index: traceIndex.index,
@@ -485,37 +453,19 @@ function identifyExtensionsFromIndex(esClient, traceIndex, callback) {
         }
         // Collect the title from each response
         if (response.hits.hits.length === 0) {
-            console.log('Completed scrolling, 0 results', traceIndex);
             if (callback) {
                 callback();
             }
         }
-        var bulkUpgradedTraces = [];
-        var upgradeIndex = 'upgrade_' + traceIndex.index;
-        response.hits.hits.forEach(function (hit) {
-            var trace = hit._source;
-            if (trace) {
-                var newTrace = checkTraceExtensions(trace);
-                bulkUpgradedTraces.push({update: {_index: upgradeIndex, _type: hit._type, _id: hit._id}});
-                bulkUpgradedTraces.push({doc: newTrace, doc_as_upsert: true});
-                ++total;
-            }
-        });
 
-        var finishBulk = function () {
-            var found = false;
-            for (var k = 0; k < indices.upgrade.length; ++k) {
-                var index = indices.upgrade[k];
-                if (index.index === upgradeIndex) {
-                    found = true;
-                    break;
-                }
+        total += response.hits.hits.length;
+        compareHits(esClient, response.hits.hits, [], function (duplicates) {
+
+            if (duplicates && duplicates.length > 0) {
+                dupIndices[traceIndex.index].push(duplicates);
+                //    console.log('Found duplicated: ' + traceIndex.index + ' index, ' + JSON.stringify(duplicates, null, 4));
             }
-            if (!found) {
-                var upgrade = Object.assign({}, traceIndex);
-                upgrade.index = upgradeIndex;
-                indices.upgrade.push(upgrade);
-            }
+
             if (response.hits.total > total) {
                 // Ask elasticsearch for the next set of hits from this search
                 esClient.scroll({
@@ -528,20 +478,6 @@ function identifyExtensionsFromIndex(esClient, traceIndex, callback) {
                     callback();
                 }
             }
-        };
-        esClient.bulk({
-            body: bulkUpgradedTraces
-        }, function (err, resp) {
-            if (err || resp.errors) {
-                var operation = retry.operation(opOpts);
-                return processBulkErrors(esClient, bulkUpgradedTraces, operation, function (err) {
-                    if (err) {
-                        return callback(err);
-                    }
-                    finishBulk();
-                });
-            }
-            finishBulk();
         });
     });
 }
@@ -1073,28 +1009,6 @@ function setUpGameIndex(esClient, gameIndex, callback) {
     });
 }
 
-
-function setUpVisualizations(esClient, callback) {
-    setUpKibanaIndex(esClient, function (err) {
-        if (err) {
-            return callback(err);
-        }
-        setUpTemplateIndex(esClient, function (err) {
-            if (err) {
-                return callback(err);
-            }
-            if (indices.games.length === 0) {
-                return callback();
-            }
-
-            for (var i = 0; i < indices.games.length; i++) {
-                var gameIndex = indices.games[i];
-                setUpGameIndex(esClient, gameIndex, callback);
-            }
-        });
-    });
-}
-
 function attemptIndexExistsErrors(esClient, options, callback) {
     var operation = retry.operation(opOpts);
     operation.attempt(function (currAttempt) {
@@ -1191,320 +1105,69 @@ function upgrade(config, callback) {
     // Set up .games
     // https://github.com/e-ucm/rage-analytics/wiki/Upgrading-RAGE-Analytics
     // #case-2---upgrading-rage-without-traces-data
-    upgradeGamesIndices(esClient, finishedCountCallback(indices.games.length, function () {
-        console.log('Finished upgrading game indices!');
-        identifyExtensions(esClient, indices.traces, finishedCountCallback(indices.traces.length, function () {
-            console.log('Finished identifying traces extensions!', extensions);
-            identifyExtensions(esClient, indices.versions, finishedCountCallback(indices.versions.length, function () {
-                console.log('Finished identifying versions extensions!', extensions);
-                setUpVisualizations(esClient, finishedCountCallback(indices.games.length, function () {
-                    console.log('Finished setting up visualizations!', extensions);
+    console.log('Finished upgrading game indices!');
+    identifyExtensions(esClient, indices.traces, finishedCountCallback(indices.traces.length, function () {
+        // console.log('Finished identifying duplicates from traces indices!', JSON.stringify(dupIndices, null ,4));
+        identifyExtensions(esClient, indices.versions, finishedCountCallback(indices.versions.length, function () {
+            //      console.log('Finished identifying duplicates from versions indices!', JSON.stringify(dupIndices, null, 4));
 
-                    if (indices.upgrade.length === 0) {
+            if (toDelete.length > 0) {
+                console.log('attempting to delete ' + toDelete.length + ' elements!');
+
+                require('fs').writeFileSync('toDelete.json', JSON.stringify(toDelete, null, 4));
+                require('fs').writeFileSync('dupIndices.json', JSON.stringify(dupIndices, null, 4));
+
+                attemptCatIndexErrors(esClient, function (error, response) {
+                    if (error) {
+                        return callback(error);
+                    }
+
+                    if (!response || response.length === 0) {
                         return callback(null, config);
                     }
-                    var renameCount = finishedCountCallback(indices.upgrade.length, function () {
+
+                    var finishedCount = finishedCountCallback(response.length, function () {
                         callback(null, config);
                     });
-                    for (var i = 0; i < indices.upgrade.length; i++) {
-                        var index = indices.upgrade[i];
-                        if (!index.index) {
-                            renameCount();
-                            continue;
-                        }
 
-                        var newIndex = index.index.substr('upgrade_'.length);
-                        if (!newIndex) {
-                            renameCount();
-                            continue;
+
+                    var legend = '';
+                    for (var i = 0; i < response.length; i++) {
+                        var index = response[i];
+                        var originalResponse = null;
+                        if (index.index && dupIndices[index.index]) {
+                            for (var j = 0; j < originalIndices.length; ++j) {
+                                if (originalIndices[j].index === index.index) {
+                                    originalResponse = originalIndices[j];
+                                }
+                            }
+
+                            legend += index.index + ' -- deleted: ' + dupIndices[index.index].length +
+                                ' original: ' + (originalResponse ? originalResponse['docs.count'] : 'not found') + ' current: ' + index['docs.count'] + '\n';
+
+                        } else {
+                            finishedCount();
                         }
-                        processExistingUpgradeIndex(esClient, index, newIndex, renameCount, callback);
                     }
-                }));
-            }));
+
+                    require('fs').writeFileSync('dupInfo.txt', legend);
+                    callback(null, config);
+                });
+            }
         }));
     }));
 }
 
-function sourcesEquals(x, y) {
-    // Recursive object equality check
-    var p = Object.keys(x);
-    return Object.keys(y).every(function (i) {
-        if (i === 'ext') {
-            var exts = y.ext;
-            if (exts) {
-                Object.keys(exts).every(function (extKey) {
-                    if (extensions.indexOf(extKey) === -1) {
-                        return false;
-                    }
-
-                    return p.indexOf(extKey) !== -1 && exts[extKey] === x[extKey];
-                });
-            } else {
-                for (var j = 0; j < extensions.length; ++i) {
-                    var identifiedExt = extensions[j];
-                    if (p.indexOf(identifiedExt) !== -1) {
-                        return false;
-                    }
-                }
-            }
-
-            return true;
-        }
-
-        if (i === 'fields' || i === 'visState') {
-            return true;
-        }
-
-        if (p.indexOf(i) !== -1) {
-            return true;
-        }
-
-        return extensions.indexOf(i) !== -1;
-    });
-}
-
-function checkHit(esClient, hit, index, callback) {
-    attemptGetIndexErrors(esClient, {
-        index: index.index,
-        type: hit._type,
-        id: hit._id
-    }, function (error, response) {
-        if (error) {
-            return callback(error);
-        }
-
-        if (!response || !response._source) {
-            return callback(null, false, hit, response);
-        }
-
-        // Compare sources
-        if (sourcesEquals(hit._source, response._source)) {
-            return callback(null, true);
-        }
-
-        return callback(null, false, hit, response);
-    });
-}
-
-function checkIndices(esClient, backedUpIndex, index, callback) {
-    scrollIndex(esClient, backedUpIndex, function (err, finished, hits, finishedCallback) {
-        if (err) {
-            console.error('There was an error scrolling the index ' + JSON.stringify(backedUpIndex, null, 4));
-            return callback(err);
-        }
-
-        if (finished) {
-            return callback(null);
-        }
-
-        if (hits.hits.length === 0) {
-            return callback(null);
-        }
-
-        var countCallbak = finishedCountCallback(hits.hits.length, function () {
-            finishedCallback();
-        });
-
-        hits.hits.forEach(function (hit) {
-            checkHit(esClient, hit, index, function (err, same, hit, ret) {
-                if (err) {
-                    return callback(err);
-                }
-
-                if (!same) {
-                    return callback(new Error('Failed comparing hit ' + JSON.stringify(hit, null, 4) +
-                        ' ' + JSON.stringify(ret, null, 4)));
-                }
-
-                countCallbak();
-            });
-        });
-    });
-}
-
-var checked = false;
 function check(config, callback) {
-    var esClient = config.elasticsearch.esClient;
-
-    attemptCatIndexErrors(esClient, function (error, response) {
-        if (error) {
-            return callback(error);
-        }
-
-        if (!response || response.length === 0) {
-            return callback(null, config);
-        }
-
-        var backupCount = 0;
-        var i;
-        var index;
-        for (i = 0; i < response.length; i++) {
-            index = response[i];
-            if (index.index) {
-                if (index.index.indexOf('backup_') === 0) {
-                    backupCount++;
-                }
-            }
-        }
-
-        var countCallback = finishedCountCallback(backupCount, function () {
-            callback(null, config);
-        });
-
-        var finishedCheckingIndicesCallback = function (err) {
-            if (err) {
-                return callback(err, config);
-            }
-            countCallback();
-        };
-
-        function recursiveCheck() {
-            check(config, callback);
-        }
-
-        for (i = 0; i < response.length; i++) {
-            index = response[i];
-            if (index.index) {
-                if (index.index.indexOf('backup_') === 0) {
-
-                    var normalIndex = index.index.substr('backup_'.length);
-
-                    if (normalIndex) {
-                        var foundIndex = false;
-                        for (var j = 0; j < response.length; ++j) {
-                            var retIndex = response[j];
-
-                            if (retIndex.index && retIndex.index === normalIndex) {
-                                foundIndex = true;
-                                if (index['docs.count'] !== retIndex['docs.count']) {
-                                    if (checked) {
-                                        return callback(new Error('DIFFERENT document count ' +
-                                            JSON.stringify(index, null, 4) + ' and ' +
-                                            JSON.stringify(retIndex, null, 4)), config);
-                                    }
-                                    checked = true;
-                                    return setTimeout(recursiveCheck, 5000);
-                                }
-
-                                checkIndices(esClient, index, retIndex, finishedCheckingIndicesCallback);
-                            }
-                        }
-                        if (!foundIndex) {
-                            return callback(new Error('Not found normal index for backed index for ' +
-                                '(should not happen): ' +
-                                JSON.stringify(index, null, 4)));
-                        }
-                    } else {
-                        return callback(new Error('Not found correct index for backed index: ' +
-                            JSON.stringify(index, null, 4)));
-                    }
-                }
-            }
-        }
-    });
+    callback(null, config);
 }
 
 function clean(config, callback) {
-    var esClient = config.elasticsearch.esClient;
-
-    var toRemove = [];
-    // Remove the backups
-    for (var i = 0; i < indices.backup.length; i++) {
-        var backupIndex = indices.backup[i];
-        toRemove.push(backupIndex.index);
-    }
-
-    // Remove the upgrades that werent removed before
-    for (var j = 0; j < indices.upgrade.length; j++) {
-        var upgradeIndex = indices.upgrade[j];
-        if (!indices.deleted[upgradeIndex.index]) {
-            toRemove.push(upgradeIndex.index);
-        }
-    }
-    if (toRemove.length === 0) {
-        return callback(null, config);
-    }
-    attemptIndexDeleteErrors(esClient, {index: toRemove.join(',')}, function (err) {
-        indices = {
-            traces: [],
-            versions: [],
-            results: [],
-            opaqueValues: [],
-            games: [],
-            configs: {
-                template: null,
-                kibana: null,
-                defaultKibanaIndex: null
-            },
-            others: [],
-            backup: [],
-            upgrade: [],
-            deleted: {}
-        };
-        extensions = [];
-        callback(err, config);
-    });
-}
-
-function restoreIndex(esClient, backedUpIndex, newIndex, callbackToDelete) {
-    attemptIndexExistsErrors(esClient, {
-            index: newIndex
-        }, function (err, exists) {
-            if (err) {
-                console.error('Error checking if index exists (probably does not exist)' +
-                    ', going to reindex' + err);
-            }
-
-            if (exists) {
-                attemptIndexDeleteErrors(esClient, {index: newIndex}, function (err, result) {
-                    if (err) {
-                        console.error('Could not delete existing index (should not happen)!');
-                        console.error(err);
-                        return callbackToDelete(err);
-                    }
-
-                    console.log('Index ' + newIndex + ' deleted successfully, result ' +
-                        JSON.stringify(result, null, 4));
-                    setTimeout(function () {
-                        reindexManually(esClient, backedUpIndex, newIndex, callbackToDelete);
-                    }, 5000);
-                });
-            } else {
-                reindexManually(esClient, backedUpIndex, newIndex, callbackToDelete);
-            }
-        }
-    );
+    callback(null, config);
 }
 
 function restore(config, callback) {
-    var esClient = config.elasticsearch.esClient;
-
-    var operationsCount = finishedCountCallback(2, function () {
-        callback(null, config);
-    });
-    var renameCount = finishedCountCallback(indices.backup.length, operationsCount);
-    var reindexedCallback = function (err, from) {
-        if (err) {
-            return callback(err);
-        }
-        attemptIndexDeleteErrors(esClient, {index: from}, renameCount);
-    };
-    for (var i = 0; i < indices.backup.length; i++) {
-        var index = indices.backup[i];
-        restoreIndex(esClient, index, index.index.substr('backup_'.length), reindexedCallback);
-    }
-    var toRemove = [];
-    for (var j = 0; j < indices.upgrade.length; j++) {
-        var indexj = indices.upgrade[j];
-        if (indexj && indexj.index && !indices.deleted[indexj.index]) {
-            toRemove.push(indexj.index);
-        }
-    }
-    if (toRemove.length === 0) {
-        return operationsCount();
-    }
-    attemptIndexDeleteErrors(esClient, {index: toRemove.join(',')}, operationsCount);
+    callback(null, config);
 }
 
 module.exports = {

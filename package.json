@@ -26,13 +26,15 @@
     "test-win": "npm run lint && set NODE_ENV=test&& mocha -R spec",
     "test-travis": "npm run lint && npm run fast-setup && NODE_ENV=test TEST_ES=true ./node_modules/istanbul/lib/cli.js cover ./node_modules/mocha/bin/_mocha -- -R spec",
     "gen-apidoc": "apidoc -i ./routes -o ./public/apidoc",
-    "upgrade": "node ./bin/upgrade/upgrade.js"
+    "upgrade": "node ./bin/upgrade/upgrade.js",
+    "delete-duplicates": "node ./bin/delete-duplicates.js"
   },
   "dependencies": {
     "adjective-adjective-animal": "*",
     "adm-zip": "*",
     "async": "^1.3.x",
     "body-parser": "^1.13.x",
+    "co": "4.6.x",
     "easy-collections": "e-ucm/easy-collections",
     "elasticsearch": "*",
     "express": "~4.13.x",
@@ -42,6 +44,7 @@
     "mongodb": "^2.0.x",
     "morgan": "^1.6.x",
     "multer": "^1.1.x",
+    "promise-retry": "1.1.x",
     "request": "^2.60.x",
     "retry": "^0.10.1",
     "shelljs": "^0.5.x",
