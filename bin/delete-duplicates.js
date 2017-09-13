@@ -136,7 +136,7 @@ co(function*() {
             return function errTry(error) {
                 body.error = JSON.stringify(error, null, 4);
                 console.log('Ignoring error', error);
-                co(function * () {
+                co(function *() {
                     yield at(esClient.index({
                         index: '.deleting-errors',
                         type: 'errored',
@@ -153,6 +153,70 @@ co(function*() {
                 type: hit._source.duplicate._type,
                 id: hit._source.duplicate._id,
             })).catch(deleteIndex(hit));
+        }
+    }
+
+    function* checkDupHits(hits) {
+
+        for (let i = 0; i < hits.length; ++i) {
+            let hit = hits[i];
+            let response = yield at(esClient.search({
+                index: hit._index,
+                type: hit._type,
+                body: {
+                    query: {
+                        match: {
+                            timestamp: hit._source.timestamp
+                        }
+                    }
+                }
+            }));
+            if (!response ||
+                !response.hits ||
+                !response.hits.hits) {
+                continue;
+            }
+            for (let j = 0; j < response.hits.hits.length; ++j) {
+                let foundHit = response.hits.hits[j];
+                if (!foundHit) {
+                    continue;
+                }
+
+                if (foundHit._id === hit._id) {
+                    continue;
+                }
+                let p = Object.keys(hit._source);
+                let euq = true;
+                Object.keys(foundHit._source).forEach(function (k) {
+                    if (p.indexOf(k) === -1) {
+                        euq = false;
+                    }
+                    if (hit._source[k] !== foundHit._source[k]) {
+                        euq = false;
+                    }
+                });
+
+                if (euq) {
+
+                    try {
+                        yield at(esClient.get({
+                            index: toDeleteIndex,
+                            type: foundHit._type,
+                            id: foundHit._id
+                        }));
+                    } catch (notFoundEx) {
+                        foundHit._source._reserved_index = foundHit._index;
+                        yield at(esClient.index({
+                            index: toDeleteIndex,
+                            type: foundHit._type,
+                            body: foundHit._source,
+                            id: foundHit._id
+                        })).then(function () {
+                            totalDups++;
+                        });
+                    }
+                }
+            }
         }
     }
 
@@ -180,6 +244,56 @@ co(function*() {
         }
     }
 
+    function* removeDupHits(hits) {
+
+        function deleteIndex(body) {
+            return function errTry(error) {
+                body.error = JSON.stringify(error, null, 4);
+                console.log('Ignoring error', error);
+                co(function *() {
+                    yield at(esClient.index({
+                        index: '.deleting-errors',
+                        type: 'errored',
+                        body: body
+                    }));
+                });
+            }
+        }
+
+        for (let i = 0; i < hits.length; ++i) {
+            let hit = hits[i];
+            yield at(esClient.delete({
+                index: hit._source._reserved_index,
+                type: hit._type,
+                id: hit._id,
+            })).catch(deleteIndex(hit));
+        }
+    }
+
+    function* deleteDuplicates() {
+        let result = yield at(esClient.search({
+            index: toDeleteIndex,
+            scroll: defaultScrollTimeout
+        }));
+
+        let total = result.hits.hits.length;
+
+        console.log('Going to delete', total);
+
+        yield removeDupHits(result.hits.hits);
+
+        while (total < result.hits.total) {
+
+            result = yield at(esClient.scroll({
+                scrollId: result._scroll_id,
+                scroll: defaultScrollTimeout
+            }));
+            total += result.hits.hits.length;
+
+            yield removeDupHits(result.hits.hits);
+        }
+    }
+
 
     for (let i = 0; i < indices.length; i++) {
         let index = indices[i];
@@ -194,15 +308,16 @@ co(function*() {
 
         let result = yield at(esClient.search({
             index: scrollId,
-            scroll: defaultScrollTimeout, sort: sort
+            scroll: defaultScrollTimeout //, sort: sort
         }));
 
         let total = result.hits.hits.length;
 
         console.log(total);
 
-        let hits = [];
-        yield groupHits(result.hits.hits, hits);
+        //   let hits = [];
+        //   yield groupHits(result.hits.hits, hits);
+        yield checkDupHits(result.hits.hits);
 
         while (total < result.hits.total) {
 
@@ -212,13 +327,15 @@ co(function*() {
             }));
             total += result.hits.hits.length;
 
-            yield groupHits(result.hits.hits, hits);
+            //    yield groupHits(result.hits.hits, hits);
+            yield checkDupHits(result.hits.hits);
             console.log(total);
         }
     }
 
     console.log('Duplicates', totalDups);
-    yield deleteDups();
+    // yield deleteDups();
+    yield deleteDuplicates();
 
 }).catch(function (err) {
     // log any uncaught errors
