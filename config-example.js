@@ -39,6 +39,7 @@ exports.lrs = {
     useLrs: '{{useLrs}}'
 };
 exports.storm = {
+    defaultAnalysisName: '{{defaultAnalysisName}}',
     realtimeJar: '{{realtimeJar}}',
     path: '{{stormPath}}',
     nimbusHost: '{{nimbusHost}}',
@@ -48,9 +49,9 @@ exports.storm = {
     elasticsearchPort: '{{elasticsearchPort}}'
 };
 exports.maxSizeRequest = '{{maxSizeRequest}}';
-
 exports.kafka = {
-    uri: process.env.KAFKA_URI || process.env.KAFKA_URL || '{{kafkaUrl}}'
+    uri: process.env.KAFKA_URI || process.env.KAFKA_URL || '{{kafkaUrl}}',
+    topicName: '{{kafkaTopicName}}'
 };
 exports.a2 = {
     a2ApiPath: '{{a2ApiPath}}',
