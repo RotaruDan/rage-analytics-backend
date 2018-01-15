@@ -85,11 +85,12 @@ var setupVisualizationTemplates = function() {
 };
 
 var updateVisualizationMapping = function() {
+
     esClient.indices.putMapping({
         index: '.kibana',
         type: 'visualization',
         body: {
-            dynamic: 'strict',
+            dynamic: 'true',
             properties: {
                 description: {
                     type: 'text'
