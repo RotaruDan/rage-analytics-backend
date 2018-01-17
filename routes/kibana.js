@@ -1105,7 +1105,9 @@ router.post('/dashboard/activity/:activityId', function (req, res) {
                         time: 0,
                         ext: {
                             progress: 0,
-                            time: 0
+                            time: 0,
+                            thomasKilmann: '',
+                            officeMorale: 0
                         }
                     }
                 }
