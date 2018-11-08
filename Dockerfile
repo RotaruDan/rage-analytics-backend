@@ -74,6 +74,8 @@ COPY ./ ${WORK_DIR}/
 RUN groupadd -r ${USER_NAME} \
     && mkdir ${WORK_DIR}/analysis \
     && chmod 777 -R ${WORK_DIR}/analysis \
+    && mkdir ${WORK_DIR}/output \
+    && chmod 777 -R ${WORK_DIR}/output \
     && useradd -r -d ${WORK_DIR} -g ${USER_NAME} ${USER_NAME} \
     && chown -R ${USER_NAME}:${USER_NAME} ${WORK_DIR}
 ENV HOME=${WORK_DIR}
